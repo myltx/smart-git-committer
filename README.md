@@ -29,8 +29,8 @@
 - 常用：`npm run release:github -- patch`（自动 +0.0.1）
 - 其他：`npm run release:github -- minor` / `npm run release:github -- major`
 - 指定版本：`npm run release:github -- 0.1.0`
-- 脚本会自动执行：质量检查 → 更新版本 → 自动写入 `CHANGELOG.md` → 提交 → 打 tag → 推送 `main` 与 tag
-- 推送 tag 后会触发 GitHub Actions 自动上传 `.vsix` 到 Releases
+- 脚本会自动执行：质量检查 → 更新版本 → 自动写入 `CHANGELOG.md` → 控制台输出本次日志预览 → 提交 → 打 tag → 推送 `main` 与 tag
+- 推送 tag 后会触发 GitHub Actions 自动上传 `.vsix` 到 Releases，并将 `CHANGELOG.md` 中当前版本段落写入 Release 说明
 
 ## Commands
 

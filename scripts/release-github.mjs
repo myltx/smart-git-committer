@@ -207,6 +207,7 @@ function updateChangelog({ version, tag, previousTag, subjects, repoWebUrl }) {
   }
 
   writeFileSync(changelogPath, `${content.trimEnd()}\n`);
+  return releaseSection;
 }
 
 const bumpArg = process.argv[2];
@@ -258,13 +259,14 @@ if (tagExists) {
 
 const repoWebUrl = getRepoWebUrl(pkg);
 console.log('\n[release:github] 自动更新 CHANGELOG.md...');
-updateChangelog({
+const releaseSection = updateChangelog({
   version,
   tag,
   previousTag,
   subjects,
   repoWebUrl
 });
+console.log(`\n[release:github] 本次发布日志预览：\n\n${releaseSection}\n`);
 
 console.log(`\n[release:github] 提交版本 ${version}...`);
 const filesToAdd = ['package.json', 'CHANGELOG.md'];

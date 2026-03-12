@@ -66,8 +66,25 @@ jobs:
       - name: Package VSIX
         run: npm run package:vsix
 
+      - name: Build Release Notes From CHANGELOG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v version="$VERSION" '
+          BEGIN { capture = 0 }
+          $0 ~ "^## \\[" version "\\]" { capture = 1 }
+          capture && $0 ~ "^## \\[" && $0 !~ "^## \\[" version "\\]" { exit }
+          capture { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "## [${VERSION}] - ${GITHUB_REF_NAME}" > RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "- 无可用变更说明（请检查 CHANGELOG.md 是否包含该版本段落）。" >> RELEASE_NOTES.md
+          fi
+
       - name: Upload VSIX to Release
         uses: softprops/action-gh-release@v2
         with:
           files: smart-git-committer-*.vsix
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
