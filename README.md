@@ -27,7 +27,7 @@
 
 自动发布（推荐）：
 - 执行：`npm run release:github -- 0.1.0`（或 `patch/minor/major`）
-- 脚本会自动执行：质量检查 → 更新版本 → 提交 → 打 tag → 推送 `main` 与 tag
+- 脚本会自动执行：质量检查 → 更新版本 → 自动写入 `CHANGELOG.md` → 提交 → 打 tag → 推送 `main` 与 tag
 - 推送 tag 后会触发 GitHub Actions 自动上传 `.vsix` 到 Releases
 
 ## Commands
