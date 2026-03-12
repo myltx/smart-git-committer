@@ -28,6 +28,7 @@
     "ai"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:smartGitCommitter.generateCommitMessage",
     "onCommand:smartGitCommitter.setApiKey",
     "onCommand:smartGitCommitter.configure"

@@ -37,6 +37,7 @@
 - `Smart Git Committer: 根据变更生成提交信息并填入输入框`
 - `Smart Git Committer: 设置 API Key`
 - `Smart Git Committer: 打开 Smart Git Committer 设置`（配置面板）
+- 状态栏右下角提供快捷入口：`SGC 设置`
 - Source Control 视图标题栏仅保留“生成提交信息”快捷按钮；“插件设置”位于仓库项菜单（右键仓库或对应二级菜单）
 - 配置面板顶部提供 `测试连接`（使用当前 Base URL / Model + 已保存 API Key 进行连通性校验）
 

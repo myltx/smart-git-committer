@@ -12,6 +12,16 @@ const GENERATE_COMMAND = 'smartGitCommitter.generateCommitMessage';
 const SET_API_KEY_COMMAND = 'smartGitCommitter.setApiKey';
 const CONFIGURE_COMMAND = 'smartGitCommitter.configure';
 
+function createSettingsStatusBarItem(): vscode.StatusBarItem {
+  const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
+  item.name = 'Smart Git Committer 设置';
+  item.text = '$(settings-gear) SGC 设置';
+  item.tooltip = '打开 Smart Git Committer 配置面板';
+  item.command = CONFIGURE_COMMAND;
+  item.show();
+  return item;
+}
+
 function getWorkspaceRoot(): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
@@ -239,7 +249,8 @@ export function activate(context: vscode.ExtensionContext): void {
     SettingsPanel.createOrShow(context);
   });
 
-  context.subscriptions.push(generateDisposable, setApiKeyDisposable, configureDisposable);
+  const settingsStatusBarItem = createSettingsStatusBarItem();
+  context.subscriptions.push(generateDisposable, setApiKeyDisposable, configureDisposable, settingsStatusBarItem);
 }
 
 export function deactivate(): void {
