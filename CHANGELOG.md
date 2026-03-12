@@ -10,6 +10,24 @@
 
 - 暂无
 
+## [0.2.0] - 2026-03-12
+
+### Added
+
+- feat(release): 更新 README.md 中的自动发布说明
+- feat(release): 增加对文件过滤和 Diff 字符预算的支持
+- feat(release): 修改 smartGitCommitter 语言模式
+- feat(release): 自动更新 CHANGELOG.md
+
+### Changed
+
+- docs: add changelog
+
+
+### Added
+
+- 暂无
+
 ## [0.0.1] - 2026-03-12
 
 ### Added
@@ -23,5 +41,6 @@
 - 提供设置面板（基础配置与高级模板分离保存、连接测试、邀请链接入口）。
 - 提供 GitHub Actions：`main` 做质量检查，`v*` tag 自动发布 Release 并上传 `.vsix`。
 
-[Unreleased]: https://github.com/myltx/smart-git-committer/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/myltx/smart-git-committer/compare/v0.2.0...HEAD
 [0.0.1]: https://github.com/myltx/smart-git-committer/releases/tag/v0.0.1
+[0.2.0]: https://github.com/myltx/smart-git-committer/compare/v0.1.0...v0.2.0
