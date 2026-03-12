@@ -1,0 +1,155 @@
+{
+  "name": "smart-git-committer",
+  "displayName": "Smart Git Committer",
+  "description": "根据暂存区变更自动生成 Conventional Commits 提交信息，支持一键提交或复制。",
+  "version": "0.0.1",
+  "publisher": "local-dev",
+  "icon": "resources/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/myltx/smart-git-committer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/myltx/smart-git-committer/issues"
+  },
+  "homepage": "https://github.com/myltx/smart-git-committer#readme",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Source Control"
+  ],
+  "keywords": [
+    "git",
+    "commit",
+    "conventional-commits",
+    "ai"
+  ],
+  "activationEvents": [
+    "onCommand:smartGitCommitter.generateCommitMessage",
+    "onCommand:smartGitCommitter.setApiKey",
+    "onCommand:smartGitCommitter.configure"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "smartGitCommitter.generateCommitMessage",
+        "title": "Smart Git Committer: Generate Commit Message",
+        "icon": {
+          "light": "resources/light/generate.svg",
+          "dark": "resources/dark/generate.svg"
+        }
+      },
+      {
+        "command": "smartGitCommitter.setApiKey",
+        "title": "Smart Git Committer: Set API Key"
+      },
+      {
+        "command": "smartGitCommitter.configure",
+        "title": "Smart Git Committer: Open Settings Panel",
+        "icon": {
+          "light": "resources/light/configure.svg",
+          "dark": "resources/dark/configure.svg"
+        }
+      }
+    ],
+    "configuration": {
+      "title": "Smart Git Committer",
+      "properties": {
+        "smartGitCommitter.baseURL": {
+          "type": "string",
+          "default": "https://api.moleapi.com",
+          "description": "AI 模型 API 的 Base URL（默认 MoleAPI；支持其他 OpenAI 兼容中转站）"
+        },
+        "smartGitCommitter.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API 密钥（建议通过 SecretStorage 安全存储）"
+        },
+        "smartGitCommitter.model": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "要使用的模型名称"
+        },
+        "smartGitCommitter.recentCommitCount": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "用于风格参考的近期提交数量"
+        },
+        "smartGitCommitter.autoStageUntracked": {
+          "type": "boolean",
+          "default": false,
+          "description": "暂存区为空时，是否把未跟踪文件也自动加入暂存区（默认关闭）"
+        },
+        "smartGitCommitter.messageStyle": {
+          "type": "string",
+          "enum": [
+            "title",
+            "title+body"
+          ],
+          "default": "title",
+          "description": "提交信息输出风格：单行标题或标题+正文"
+        },
+        "smartGitCommitter.languageMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "zh",
+            "en"
+          ],
+          "default": "auto",
+          "description": "提交信息语言策略：自动识别、强制中文或强制英文"
+        },
+        "smartGitCommitter.promptTemplate": {
+          "type": "string",
+          "default": "",
+          "description": "高级：自定义 Prompt 模板。支持占位符 {{DIFF}}、{{RECENT_COMMITS}}、{{MESSAGE_STYLE_RULES}}、{{LANGUAGE_INSTRUCTION}}、{{STYLE_PREFERENCE}}、{{ALLOWED_TYPES}}。留空使用内置模板。"
+        }
+      }
+    },
+    "menus": {
+      "scm/title": [
+        {
+          "command": "smartGitCommitter.generateCommitMessage",
+          "group": "navigation@10",
+          "when": "scmProvider == git"
+        },
+        {
+          "command": "smartGitCommitter.configure",
+          "group": "navigation@11",
+          "when": "scmProvider == git"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "compile": "npm run build",
+    "watch": "tsup --watch",
+    "typecheck": "tsc --noEmit -p ./",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "test": "vitest run",
+    "vscode:prepublish": "npm run lint && npm run test && npm run build",
+    "package:vsix": "vsce package",
+    "release:github": "node ./scripts/release-github.mjs"
+  },
+  "dependencies": {
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^8.26.0",
+    "@typescript-eslint/parser": "^8.26.0",
+    "@vscode/vsce": "^3.2.2",
+    "eslint": "^8.57.1",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.2",
+    "vitest": "^2.1.9"
+  }
+}

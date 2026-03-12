@@ -1,0 +1,8 @@
+{
+	"smartGitCommitter.baseURL": "https://api.moleapi.com",
+	"smartGitCommitter.model": "gpt-4o-mini",
+	"smartGitCommitter.recentCommitCount": 3,
+	"smartGitCommitter.autoStageUntracked": true,
+	"smartGitCommitter.messageStyle": "title",
+	"smartGitCommitter.languageMode": "auto"
+}

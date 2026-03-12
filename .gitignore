@@ -1,0 +1,33 @@
+node_modules
+out
+.vscode-test
+*.vsix
+coverage
+test-git
+
+
+# MACOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Icon?
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.log
+*.cache
+*.swp
+*.swo
+*.tmp
+*.bak
+*.old
+*.zip
+*.rar
+*.7z
+*.tar.gz
