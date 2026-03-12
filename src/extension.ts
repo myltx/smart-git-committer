@@ -5,6 +5,8 @@ import { generateCommitMessage } from './services/ai';
 import { getConfig } from './services/config';
 import { GitService } from './services/git';
 import { promptAndStoreApiKey, resolveApiKey } from './services/secret';
+import { applyDiffBudget } from './utils/diffBudget';
+import { filterFilesByGlobs } from './utils/glob';
 
 const GENERATE_COMMAND = 'smartGitCommitter.generateCommitMessage';
 const SET_API_KEY_COMMAND = 'smartGitCommitter.setApiKey';
@@ -98,29 +100,66 @@ async function runGenerate(context: vscode.ExtensionContext): Promise<void> {
     }
 
     let diffSource: 'staged' | 'workingTree' = 'staged';
-    let commitContextDiff = await git.getStagedDiff();
+    let commitContextDiff = '';
     let autoStagedFiles: string[] = [];
-    if (!commitContextDiff.trim()) {
-      autoStagedFiles = await git.getWorkingTreeChangedFiles(config.autoStageUntracked);
+    let filteredOutCount = 0;
+    let gitIgnoredCount = 0;
+
+    const applyGitIgnoreIfNeeded = async (files: string[]): Promise<string[]> => {
+      if (!config.respectGitIgnore || files.length === 0) {
+        return files;
+      }
+      const result = await git.filterIgnoredFiles(files);
+      gitIgnoredCount += result.ignored.length;
+      return result.included;
+    };
+
+    const stagedFiles = await git.getStagedChangedFiles();
+    if (stagedFiles.length > 0) {
+      const stagedFilterResult = filterFilesByGlobs(stagedFiles, config.includeGlobs, config.excludeGlobs);
+      filteredOutCount += stagedFilterResult.excluded.length;
+      const stagedIncludedFiles = await applyGitIgnoreIfNeeded(stagedFilterResult.included);
+      if (stagedIncludedFiles.length === 0) {
+        vscode.window.showInformationMessage(
+          `暂存区共有 ${stagedFiles.length} 个变更文件，但都被过滤规则或 .gitignore 排除了。请调整规则后重试。`
+        );
+        return;
+      }
+      commitContextDiff = await git.getStagedDiffForFiles(stagedIncludedFiles);
+    }
+
+    if (!commitContextDiff.trim() && stagedFiles.length === 0) {
+      const workingTreeFiles = await git.getWorkingTreeChangedFiles(config.autoStageUntracked);
+      const workingTreeFilterResult = filterFilesByGlobs(
+        workingTreeFiles,
+        config.includeGlobs,
+        config.excludeGlobs
+      );
+      filteredOutCount += workingTreeFilterResult.excluded.length;
+      autoStagedFiles = await applyGitIgnoreIfNeeded(workingTreeFilterResult.included);
       if (autoStagedFiles.length === 0) {
         if (config.autoStageUntracked) {
-          vscode.window.showInformationMessage('未检测到可用于生成的信息：暂存区和工作区都没有可用变更。');
+          vscode.window.showInformationMessage(
+            '未检测到可用于生成的信息：暂存区和工作区都没有可用变更，或全部被过滤规则/.gitignore 排除。'
+          );
           return;
         }
         vscode.window.showInformationMessage(
-          '暂存区为空，且未检测到可自动暂存的已跟踪改动。若需包含新文件，请先 git add 或开启 autoStageUntracked。'
+          '暂存区为空，且未检测到可自动暂存的已跟踪改动（或已被过滤/.gitignore 排除）。若需包含新文件，请先 git add 或开启 autoStageUntracked。'
         );
         return;
       }
 
       await git.stageFiles(autoStagedFiles);
-      commitContextDiff = await git.getStagedDiff();
+      commitContextDiff = await git.getStagedDiffForFiles(autoStagedFiles);
       diffSource = 'workingTree';
     }
     if (!commitContextDiff.trim()) {
       vscode.window.showInformationMessage('已暂存变更，但无法提取可用于生成的信息（可能仅包含二进制文件）。');
       return;
     }
+
+    const budgetedDiff = applyDiffBudget(commitContextDiff, config.maxDiffChars);
 
     const commitMessage = await vscode.window.withProgress(
       {
@@ -134,7 +173,7 @@ async function runGenerate(context: vscode.ExtensionContext): Promise<void> {
           baseURL: config.baseURL,
           model: config.model,
           apiKey,
-          stagedDiff: commitContextDiff,
+          stagedDiff: budgetedDiff.diff,
           recentCommits,
           messageStyle: config.messageStyle,
           languageMode: config.languageMode,
@@ -155,15 +194,27 @@ async function runGenerate(context: vscode.ExtensionContext): Promise<void> {
       return;
     }
 
+    const tips: string[] = [];
+    if (filteredOutCount > 0) {
+      tips.push(`已按 include/exclude 规则过滤 ${filteredOutCount} 个文件`);
+    }
+    if (gitIgnoredCount > 0) {
+      tips.push(`已按 .gitignore 过滤 ${gitIgnoredCount} 个文件`);
+    }
+    if (budgetedDiff.truncated) {
+      tips.push(`Diff 超出预算，已裁剪为 ${budgetedDiff.usedChars}/${budgetedDiff.originalChars} 字符`);
+    }
+    const tail = tips.length > 0 ? `（${tips.join('；')}）` : '';
+
     if (diffSource === 'workingTree') {
       const untrackedText = config.autoStageUntracked ? '（已包含未跟踪文件）' : '（未包含未跟踪文件）';
       vscode.window.showInformationMessage(
-        `暂存区为空，已基于工作区变更生成并填充提交信息，自动暂存 ${autoStagedFiles.length} 个文件 ${untrackedText}。`
+        `暂存区为空，已基于工作区变更生成并填充提交信息，自动暂存 ${autoStagedFiles.length} 个文件 ${untrackedText}。${tail}`
       );
       return;
     }
 
-    vscode.window.showInformationMessage('已基于暂存区变更生成并填充到 Source Control 提交输入框。');
+    vscode.window.showInformationMessage(`已基于暂存区变更生成并填充到 Source Control 提交输入框。${tail}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知错误';
     vscode.window.showErrorMessage(`生成失败：${message}`);

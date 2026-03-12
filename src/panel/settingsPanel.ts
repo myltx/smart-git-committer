@@ -23,6 +23,10 @@ interface SaveBaseSettingsPayload {
   baseURL: string;
   model: string;
   recentCommitCount: number;
+  maxDiffChars: number;
+  includeGlobs: string[];
+  excludeGlobs: string[];
+  respectGitIgnore: boolean;
   autoStageUntracked: boolean;
   messageStyle: CommitMessageStyle;
   languageMode: CommitLanguageMode;
@@ -53,6 +57,10 @@ interface PanelState {
   baseURL: string;
   model: string;
   recentCommitCount: number;
+  maxDiffChars: number;
+  includeGlobs: string[];
+  excludeGlobs: string[];
+  respectGitIgnore: boolean;
   autoStageUntracked: boolean;
   messageStyle: CommitMessageStyle;
   languageMode: CommitLanguageMode;
@@ -231,9 +239,22 @@ export class SettingsPanel {
       return;
     }
 
+    const maxDiffChars = Math.floor(payload.maxDiffChars);
+    if (!Number.isInteger(maxDiffChars) || maxDiffChars < 2000 || maxDiffChars > 200000) {
+      vscode.window.showErrorMessage('Max Diff Chars 必须是 2000 到 200000 的整数。');
+      return;
+    }
+
+    const includeGlobs = this.normalizeGlobListInput(payload.includeGlobs);
+    const excludeGlobs = this.normalizeGlobListInput(payload.excludeGlobs);
+
     await this.updateSetting('baseURL', baseURL, scope);
     await this.updateSetting('model', model, scope);
     await this.updateSetting('recentCommitCount', count, scope);
+    await this.updateSetting('maxDiffChars', maxDiffChars, scope);
+    await this.updateSetting('includeGlobs', includeGlobs, scope);
+    await this.updateSetting('excludeGlobs', excludeGlobs, scope);
+    await this.updateSetting('respectGitIgnore', payload.respectGitIgnore, scope);
     await this.updateSetting('autoStageUntracked', payload.autoStageUntracked, scope);
     await this.updateSetting('messageStyle', payload.messageStyle, scope);
     await this.updateSetting('languageMode', payload.languageMode, scope);
@@ -273,11 +294,17 @@ export class SettingsPanel {
 
   private async updateSetting(
     key: string,
-    value: string | number | boolean,
+    value: string | number | boolean | string[],
     target: vscode.ConfigurationTarget
   ): Promise<void> {
     const config = vscode.workspace.getConfiguration('smartGitCommitter');
     await config.update(key, value, target);
+  }
+
+  private normalizeGlobListInput(input: string[]): string[] {
+    return input
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
   }
 
   private resolveSource(config: vscode.WorkspaceConfiguration, key: string): ConfigSource {
@@ -316,6 +343,30 @@ export class SettingsPanel {
         label: 'Recent Commit Count',
         value: String(config.recentCommitCount),
         source: this.resolveSource(vscodeConfig, 'recentCommitCount')
+      },
+      {
+        key: 'maxDiffChars',
+        label: 'Max Diff Chars',
+        value: String(config.maxDiffChars),
+        source: this.resolveSource(vscodeConfig, 'maxDiffChars')
+      },
+      {
+        key: 'includeGlobs',
+        label: 'Include Globs',
+        value: config.includeGlobs.length > 0 ? config.includeGlobs.join(', ') : '(全部文件)',
+        source: this.resolveSource(vscodeConfig, 'includeGlobs')
+      },
+      {
+        key: 'excludeGlobs',
+        label: 'Exclude Globs',
+        value: config.excludeGlobs.length > 0 ? config.excludeGlobs.join(', ') : '(无)',
+        source: this.resolveSource(vscodeConfig, 'excludeGlobs')
+      },
+      {
+        key: 'respectGitIgnore',
+        label: 'Respect .gitignore',
+        value: config.respectGitIgnore ? '开启' : '关闭',
+        source: this.resolveSource(vscodeConfig, 'respectGitIgnore')
       },
       {
         key: 'autoStageUntracked',
@@ -358,6 +409,10 @@ export class SettingsPanel {
       baseURL: config.baseURL,
       model: config.model,
       recentCommitCount: config.recentCommitCount,
+      maxDiffChars: config.maxDiffChars,
+      includeGlobs: config.includeGlobs,
+      excludeGlobs: config.excludeGlobs,
+      respectGitIgnore: config.respectGitIgnore,
       autoStageUntracked: config.autoStageUntracked,
       messageStyle: config.messageStyle,
       languageMode: config.languageMode,
@@ -685,6 +740,28 @@ export class SettingsPanel {
       color: var(--vscode-textLink-activeForeground);
     }
 
+    .pattern-list {
+      max-width: 560px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .pattern-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pattern-row input {
+      flex: 1;
+      max-width: none;
+    }
+
+    .pattern-actions {
+      margin-top: 8px;
+    }
+
     .btn {
       padding: 6px 12px;
       border: 1px solid transparent;
@@ -773,6 +850,38 @@ export class SettingsPanel {
         <label class="setting-label" for="recentCommitCount">参考最近提交数量 (1-10)</label>
         <div class="setting-desc">提供给 AI 参考风格的最近几次本地提交记录的数量。</div>
         <input id="recentCommitCount" type="number" min="1" max="10" />
+      </div>
+
+      <div class="setting-item">
+        <label class="setting-label" for="maxDiffChars">Diff 字符预算 (2000-200000)</label>
+        <div class="setting-desc">限制发送给 AI 的最大 Diff 长度，超出会自动裁剪，避免超时和成本飙升。</div>
+        <input id="maxDiffChars" type="number" min="2000" max="200000" />
+      </div>
+
+      <div class="setting-item">
+        <label class="setting-label" for="includeGlobs">仅包含文件 (Include Globs)</label>
+        <div class="setting-desc">可选：仅分析这些模式匹配的文件。可添加多条规则。</div>
+        <div id="includeGlobsList" class="pattern-list"></div>
+        <div class="pattern-actions">
+          <button class="btn btn-secondary" id="addIncludeGlob" type="button">添加模式</button>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <label class="setting-label" for="excludeGlobs">排除文件 (Exclude Globs)</label>
+        <div class="setting-desc">排除无关改动文件。可添加多条规则，例如 <code>**/*.lock</code>、<code>dist/**</code>。</div>
+        <div id="excludeGlobsList" class="pattern-list"></div>
+        <div class="pattern-actions">
+          <button class="btn btn-secondary" id="addExcludeGlob" type="button">添加模式</button>
+        </div>
+      </div>
+
+      <div class="setting-item checkbox-item">
+        <input id="respectGitIgnore" type="checkbox" />
+        <div>
+          <label class="setting-label" for="respectGitIgnore" style="margin-bottom: 2px;">遵循项目 .gitignore</label>
+          <div class="setting-desc" style="margin-bottom: 0;">开启后会结合项目 .gitignore 规则过滤文件，避免无关文件参与 AI 分析。</div>
+        </div>
       </div>
 
       <div class="setting-item">
@@ -896,6 +1005,49 @@ export class SettingsPanel {
       });
     }
 
+    function createPatternRow(container, value, placeholder) {
+      const row = document.createElement('div');
+      row.className = 'pattern-row';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = value || '';
+      input.placeholder = placeholder || '';
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'btn btn-secondary';
+      removeBtn.textContent = '移除';
+      removeBtn.addEventListener('click', () => {
+        row.remove();
+        if (container.children.length === 0) {
+          container.appendChild(createPatternRow(container, '', placeholder));
+        }
+      });
+      row.append(input, removeBtn);
+      return row;
+    }
+
+    function renderPatternList(containerId, patterns, placeholder) {
+      const container = el(containerId);
+      container.innerHTML = '';
+      const safePatterns = Array.isArray(patterns) && patterns.length > 0 ? patterns : [''];
+      safePatterns.forEach((pattern) => {
+        container.appendChild(createPatternRow(container, pattern, placeholder));
+      });
+    }
+
+    function appendPatternRow(containerId, placeholder) {
+      const container = el(containerId);
+      container.appendChild(createPatternRow(container, '', placeholder));
+    }
+
+    function readPatternList(containerId) {
+      const container = el(containerId);
+      const inputs = container.querySelectorAll('input[type="text"]');
+      return Array.from(inputs)
+        .map((input) => input.value.trim())
+        .filter((value) => value.length > 0);
+    }
+
     function setTestConnectionPending(pending) {
       testConnectionPending = pending;
       const btn = el('testConnection');
@@ -911,6 +1063,10 @@ export class SettingsPanel {
       el('baseURL').value = state.baseURL;
       el('model').value = state.model;
       el('recentCommitCount').value = String(state.recentCommitCount);
+      el('maxDiffChars').value = String(state.maxDiffChars);
+      renderPatternList('includeGlobsList', state.includeGlobs, 'src/**');
+      renderPatternList('excludeGlobsList', state.excludeGlobs, '**/*.lock');
+      el('respectGitIgnore').checked = Boolean(state.respectGitIgnore);
       el('autoStageUntracked').checked = Boolean(state.autoStageUntracked);
       el('messageStyle').value = state.messageStyle;
       el('languageMode').value = state.languageMode;
@@ -931,6 +1087,8 @@ export class SettingsPanel {
     el('autoStageUntracked').addEventListener('change', updateAutoStageHint);
     el('promptTemplate').addEventListener('input', updatePromptTemplateHint);
     el('openMoleApiInvite').addEventListener('click', () => vscode.postMessage({ type: 'openMoleApiInvite' }));
+    el('addIncludeGlob').addEventListener('click', () => appendPatternRow('includeGlobsList', 'src/**'));
+    el('addExcludeGlob').addEventListener('click', () => appendPatternRow('excludeGlobsList', '**/*.lock'));
     
     document.querySelectorAll('.token').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -946,6 +1104,10 @@ export class SettingsPanel {
       baseURL: el('baseURL').value,
       model: el('model').value,
       recentCommitCount: Number(el('recentCommitCount').value),
+      maxDiffChars: Number(el('maxDiffChars').value),
+      includeGlobs: readPatternList('includeGlobsList'),
+      excludeGlobs: readPatternList('excludeGlobsList'),
+      respectGitIgnore: el('respectGitIgnore').checked,
       autoStageUntracked: el('autoStageUntracked').checked,
       messageStyle: el('messageStyle').value,
       languageMode: el('languageMode').value

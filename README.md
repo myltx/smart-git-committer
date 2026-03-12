@@ -32,10 +32,10 @@
 
 ## Commands
 
-- `Smart Git Committer: Generate Commit Message`
-- `Smart Git Committer: Set API Key`
-- `Smart Git Committer: Open Settings Panel`（配置面板）
-- Source Control 视图标题栏也提供 `Generate` / `Configure` 快捷按钮
+- `Smart Git Committer: 根据变更生成提交信息并填入输入框`
+- `Smart Git Committer: 设置 API Key`
+- `Smart Git Committer: 打开 Smart Git Committer 设置`（配置面板）
+- Source Control 视图标题栏仅保留“生成提交信息”快捷按钮；“插件设置”位于仓库项菜单（右键仓库或对应二级菜单）
 - 配置面板顶部提供 `测试连接`（使用当前 Base URL / Model + 已保存 API Key 进行连通性校验）
 
 ## Configuration
@@ -44,6 +44,10 @@
 - `smartGitCommitter.model` (default: `gpt-4o-mini`)
 - `smartGitCommitter.apiKey` (不推荐，建议通过 SecretStorage)
 - `smartGitCommitter.recentCommitCount` (default: `3`)
+- `smartGitCommitter.maxDiffChars` (default: `12000`)
+- `smartGitCommitter.includeGlobs` (default: `[]`)
+- `smartGitCommitter.excludeGlobs` (default: `["**/*.lock","dist/**","out/**","coverage/**",".vscode/settings.json"]`)
+- `smartGitCommitter.respectGitIgnore` (default: `true`)
 - `smartGitCommitter.autoStageUntracked` (default: `false`)
 - `smartGitCommitter.messageStyle` (`title` | `title+body`, default: `title`)
 - `smartGitCommitter.languageMode` (`auto` | `zh` | `en`, default: `auto`)
@@ -69,3 +73,6 @@
 - 配置面板中“基础配置保存”和“高级模板保存”分离，降低误操作风险
 - 可在配置面板点击 `测试连接`，快速验证 `API Key + Base URL + Model` 是否可用
 - 配置面板 Base URL 说明区提供 MoleAPI 邀请链接入口：`https://home.moleapi.com/register?aff=GU6Y`
+- 支持 include/exclude 文件过滤与 Diff 字符预算裁剪，提升大仓库生成稳定性
+- 支持结合项目 `.gitignore` 规则过滤文件（可在设置面板开关）
+- 默认忽略并排除 `.vscode/settings.json`，避免本地编辑器配置误提交

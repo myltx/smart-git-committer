@@ -22,6 +22,18 @@ export class GitService {
     return this.git.diff(['--staged', '--']);
   }
 
+  async getStagedDiffForFiles(files: string[]): Promise<string> {
+    if (files.length === 0) {
+      return '';
+    }
+    return this.git.diff(['--staged', '--', ...files]);
+  }
+
+  async getStagedChangedFiles(): Promise<string[]> {
+    const output = await this.git.diff(['--staged', '--name-only', '--']);
+    return [...new Set(output.split('\n').map((line) => line.trim()).filter((line) => line.length > 0))];
+  }
+
   async getWorkingTreeDiff(): Promise<string> {
     return this.git.diff(['--']);
   }
@@ -45,6 +57,32 @@ export class GitService {
       return;
     }
     await this.git.add(files);
+  }
+
+  async filterIgnoredFiles(files: string[]): Promise<{ included: string[]; ignored: string[] }> {
+    if (files.length === 0) {
+      return { included: [], ignored: [] };
+    }
+
+    try {
+      const output = await this.git.raw(['check-ignore', '--', ...files]);
+      const ignoredSet = new Set(
+        output
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+      );
+
+      const ignored = files.filter((file) => ignoredSet.has(file));
+      const included = files.filter((file) => !ignoredSet.has(file));
+      return { included, ignored };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message.includes('exit code: 1')) {
+        return { included: [...files], ignored: [] };
+      }
+      throw error;
+    }
   }
 
   async getRecentCommits(count: number): Promise<RecentCommit[]> {

@@ -37,7 +37,8 @@
     "commands": [
       {
         "command": "smartGitCommitter.generateCommitMessage",
-        "title": "Smart Git Committer: Generate Commit Message",
+        "category": "Smart Git Committer",
+        "title": "根据变更生成提交信息并填入输入框",
         "icon": {
           "light": "resources/light/generate.svg",
           "dark": "resources/dark/generate.svg"
@@ -45,11 +46,13 @@
       },
       {
         "command": "smartGitCommitter.setApiKey",
-        "title": "Smart Git Committer: Set API Key"
+        "category": "Smart Git Committer",
+        "title": "设置 API Key"
       },
       {
         "command": "smartGitCommitter.configure",
-        "title": "Smart Git Committer: Open Settings Panel",
+        "category": "Smart Git Committer",
+        "title": "打开 Smart Git Committer 设置",
         "icon": {
           "light": "resources/light/configure.svg",
           "dark": "resources/dark/configure.svg"
@@ -80,6 +83,40 @@
           "minimum": 1,
           "maximum": 10,
           "description": "用于风格参考的近期提交数量"
+        },
+        "smartGitCommitter.maxDiffChars": {
+          "type": "number",
+          "default": 12000,
+          "minimum": 2000,
+          "maximum": 200000,
+          "description": "发送给 AI 的最大 Diff 字符数预算（超出会自动裁剪）"
+        },
+        "smartGitCommitter.includeGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "仅包含这些 glob 匹配的文件；为空表示不过滤（示例：src/**, package.json）"
+        },
+        "smartGitCommitter.excludeGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/*.lock",
+            "dist/**",
+            "out/**",
+            "coverage/**",
+            ".vscode/settings.json"
+          ],
+          "description": "排除这些 glob 匹配的文件，避免无关改动影响提交信息"
+        },
+        "smartGitCommitter.respectGitIgnore": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否结合项目 .gitignore 规则过滤文件（推荐开启）"
         },
         "smartGitCommitter.autoStageUntracked": {
           "type": "boolean",
@@ -118,10 +155,12 @@
           "command": "smartGitCommitter.generateCommitMessage",
           "group": "navigation@10",
           "when": "scmProvider == git"
-        },
+        }
+      ],
+      "scm/sourceControl": [
         {
           "command": "smartGitCommitter.configure",
-          "group": "navigation@11",
+          "group": "smartGitCommitter@20",
           "when": "scmProvider == git"
         }
       ]
