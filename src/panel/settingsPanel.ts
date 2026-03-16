@@ -13,13 +13,12 @@ import {
 } from '../prompts/commitPrompt';
 import { hasApiKey, promptAndStoreApiKey, resolveApiKey } from '../services/secret';
 
-type SettingsScope = 'user' | 'workspace';
-type ConfigSource = 'workspace' | 'user' | 'default';
+
+
 type ApiKeySource = 'secretStorage' | 'settings' | 'none';
 const MOLEAPI_REGISTER_AFFILIATE_URL = 'https://home.moleapi.com/register?aff=GU6Y';
 
 interface SaveBaseSettingsPayload {
-  scope: SettingsScope;
   baseURL: string;
   model: string;
   recentCommitCount: number;
@@ -30,11 +29,13 @@ interface SaveBaseSettingsPayload {
   autoStageUntracked: boolean;
   messageStyle: CommitMessageStyle;
   languageMode: CommitLanguageMode;
+  workspaceOverrides: string[];
+  apiKeyValue?: string;
 }
 
 interface SavePromptTemplatePayload {
-  scope: SettingsScope;
   promptTemplate: string;
+  workspaceOverrides: string[];
 }
 
 interface TestConnectionPayload {
@@ -42,18 +43,14 @@ interface TestConnectionPayload {
   model: string;
 }
 
-interface EffectiveConfigItem {
-  key: string;
-  label: string;
-  value: string;
-  source: ConfigSource;
-}
+
 
 interface PanelState {
   hasWorkspace: boolean;
   hasApiKey: boolean;
   apiKeySource: ApiKeySource;
-  scope: SettingsScope;
+  apiKeyValue?: string;
+  workspaceOverrides: string[];
   baseURL: string;
   model: string;
   recentCommitCount: number;
@@ -65,7 +62,6 @@ interface PanelState {
   messageStyle: CommitMessageStyle;
   languageMode: CommitLanguageMode;
   promptTemplate: string;
-  effectiveConfigs: EffectiveConfigItem[];
 }
 
 export class SettingsPanel {
@@ -209,11 +205,21 @@ export class SettingsPanel {
     }
   }
 
-  private async saveBaseSettings(payload: SaveBaseSettingsPayload): Promise<void> {
-    const scope = this.resolveTarget(payload.scope);
-    if (!scope) {
-      return;
+  private async applySettingWithOverride(key: string, value: string | number | boolean | string[] | undefined, workspaceOverrides: string[]): Promise<void> {
+    const config = vscode.workspace.getConfiguration('smartGitCommitter');
+    const isWorkspace = workspaceOverrides.includes(key);
+    
+    if (isWorkspace && vscode.workspace.workspaceFolders?.length) {
+      await config.update(key, value, vscode.ConfigurationTarget.Workspace);
+    } else {
+      await config.update(key, value, vscode.ConfigurationTarget.Global);
+      if (vscode.workspace.workspaceFolders?.length) {
+        await config.update(key, undefined, vscode.ConfigurationTarget.Workspace);
+      }
     }
+  }
+
+  private async saveBaseSettings(payload: SaveBaseSettingsPayload): Promise<void> {
 
     const baseURL = payload.baseURL.trim();
     if (!baseURL) {
@@ -248,26 +254,33 @@ export class SettingsPanel {
     const includeGlobs = this.normalizeGlobListInput(payload.includeGlobs);
     const excludeGlobs = this.normalizeGlobListInput(payload.excludeGlobs);
 
-    await this.updateSetting('baseURL', baseURL, scope);
-    await this.updateSetting('model', model, scope);
-    await this.updateSetting('recentCommitCount', count, scope);
-    await this.updateSetting('maxDiffChars', maxDiffChars, scope);
-    await this.updateSetting('includeGlobs', includeGlobs, scope);
-    await this.updateSetting('excludeGlobs', excludeGlobs, scope);
-    await this.updateSetting('respectGitIgnore', payload.respectGitIgnore, scope);
-    await this.updateSetting('autoStageUntracked', payload.autoStageUntracked, scope);
-    await this.updateSetting('messageStyle', payload.messageStyle, scope);
-    await this.updateSetting('languageMode', payload.languageMode, scope);
+    // Global properties that should not be overridden by workspace settings
+    await this.updateSetting('baseURL', baseURL, vscode.ConfigurationTarget.Global);
+    await this.updateSetting('model', model, vscode.ConfigurationTarget.Global);
 
-    const scopeLabel = payload.scope === 'workspace' ? 'Workspace' : 'User';
-    vscode.window.showInformationMessage(`基础配置已保存到 ${scopeLabel}。`);
+    // Context-dependent properties
+    const overrides = payload.workspaceOverrides || [];
+    await this.applySettingWithOverride('recentCommitCount', count, overrides);
+    await this.applySettingWithOverride('maxDiffChars', maxDiffChars, overrides);
+    await this.applySettingWithOverride('includeGlobs', includeGlobs, overrides);
+    await this.applySettingWithOverride('excludeGlobs', excludeGlobs, overrides);
+    await this.applySettingWithOverride('respectGitIgnore', payload.respectGitIgnore, overrides);
+    await this.applySettingWithOverride('autoStageUntracked', payload.autoStageUntracked, overrides);
+    await this.applySettingWithOverride('messageStyle', payload.messageStyle, overrides);
+    await this.applySettingWithOverride('languageMode', payload.languageMode, overrides);
+
+    if (payload.apiKeyValue !== undefined) {
+      if (payload.apiKeyValue.trim() === '') {
+        await this.updateSetting('apiKey', undefined, vscode.ConfigurationTarget.Global);
+      } else {
+        await this.updateSetting('apiKey', payload.apiKeyValue.trim(), vscode.ConfigurationTarget.Global);
+      }
+    }
+
+    vscode.window.showInformationMessage('配置项已成功保存。');
   }
 
   private async savePromptTemplate(payload: SavePromptTemplatePayload): Promise<void> {
-    const scope = this.resolveTarget(payload.scope);
-    if (!scope) {
-      return;
-    }
 
     const promptTemplate = payload.promptTemplate.trim();
     const promptTemplateError = validatePromptTemplate(promptTemplate);
@@ -276,25 +289,24 @@ export class SettingsPanel {
       return;
     }
 
-    await this.updateSetting('promptTemplate', promptTemplate, scope);
-    const scopeLabel = payload.scope === 'workspace' ? 'Workspace' : 'User';
-    vscode.window.showInformationMessage(`高级模板已保存到 ${scopeLabel}。`);
+    await this.applySettingWithOverride('promptTemplate', promptTemplate, payload.workspaceOverrides || []);
+    vscode.window.showInformationMessage('高级模板配置已保存。');
   }
 
-  private resolveTarget(scope: SettingsScope): vscode.ConfigurationTarget | undefined {
-    if (scope === 'workspace') {
-      if (!vscode.workspace.workspaceFolders?.length) {
-        vscode.window.showErrorMessage('当前没有打开工作区，无法写入 Workspace 设置。');
-        return undefined;
-      }
-      return vscode.ConfigurationTarget.Workspace;
+  private getWorkspaceOverrides(vscodeConfig: vscode.WorkspaceConfiguration): string[] {
+    const overrideableKeys = ['recentCommitCount', 'maxDiffChars', 'includeGlobs', 'excludeGlobs', 'respectGitIgnore', 'autoStageUntracked', 'messageStyle', 'languageMode', 'promptTemplate'];
+    if (!vscode.workspace.workspaceFolders?.length) {
+      return [];
     }
-    return vscode.ConfigurationTarget.Global;
+    return overrideableKeys.filter((key) => {
+      const inspect = vscodeConfig.inspect(key);
+      return inspect && inspect.workspaceValue !== undefined;
+    });
   }
 
   private async updateSetting(
     key: string,
-    value: string | number | boolean | string[],
+    value: string | number | boolean | string[] | undefined,
     target: vscode.ConfigurationTarget
   ): Promise<void> {
     const config = vscode.workspace.getConfiguration('smartGitCommitter');
@@ -307,105 +319,21 @@ export class SettingsPanel {
       .filter((item) => item.length > 0);
   }
 
-  private resolveSource(config: vscode.WorkspaceConfiguration, key: string): ConfigSource {
-    const inspectResult = config.inspect<unknown>(key);
-    if (!inspectResult) {
-      return 'default';
-    }
-
-    if (vscode.workspace.workspaceFolders?.length && inspectResult.workspaceValue !== undefined) {
-      return 'workspace';
-    }
-    if (inspectResult.globalValue !== undefined) {
-      return 'user';
-    }
-    return 'default';
-  }
-
-  private buildEffectiveItems(config: ReturnType<typeof getConfig>): EffectiveConfigItem[] {
-    const vscodeConfig = vscode.workspace.getConfiguration('smartGitCommitter');
-
-    return [
-      {
-        key: 'baseURL',
-        label: 'Base URL',
-        value: config.baseURL,
-        source: this.resolveSource(vscodeConfig, 'baseURL')
-      },
-      {
-        key: 'model',
-        label: 'Model',
-        value: config.model,
-        source: this.resolveSource(vscodeConfig, 'model')
-      },
-      {
-        key: 'recentCommitCount',
-        label: 'Recent Commit Count',
-        value: String(config.recentCommitCount),
-        source: this.resolveSource(vscodeConfig, 'recentCommitCount')
-      },
-      {
-        key: 'maxDiffChars',
-        label: 'Max Diff Chars',
-        value: String(config.maxDiffChars),
-        source: this.resolveSource(vscodeConfig, 'maxDiffChars')
-      },
-      {
-        key: 'includeGlobs',
-        label: 'Include Globs',
-        value: config.includeGlobs.length > 0 ? config.includeGlobs.join(', ') : '(全部文件)',
-        source: this.resolveSource(vscodeConfig, 'includeGlobs')
-      },
-      {
-        key: 'excludeGlobs',
-        label: 'Exclude Globs',
-        value: config.excludeGlobs.length > 0 ? config.excludeGlobs.join(', ') : '(无)',
-        source: this.resolveSource(vscodeConfig, 'excludeGlobs')
-      },
-      {
-        key: 'respectGitIgnore',
-        label: 'Respect .gitignore',
-        value: config.respectGitIgnore ? '开启' : '关闭',
-        source: this.resolveSource(vscodeConfig, 'respectGitIgnore')
-      },
-      {
-        key: 'autoStageUntracked',
-        label: 'Auto Stage Untracked',
-        value: config.autoStageUntracked ? '开启' : '关闭',
-        source: this.resolveSource(vscodeConfig, 'autoStageUntracked')
-      },
-      {
-        key: 'messageStyle',
-        label: 'Message Style',
-        value: config.messageStyle,
-        source: this.resolveSource(vscodeConfig, 'messageStyle')
-      },
-      {
-        key: 'languageMode',
-        label: 'Language Mode',
-        value: config.languageMode,
-        source: this.resolveSource(vscodeConfig, 'languageMode')
-      },
-      {
-        key: 'promptTemplate',
-        label: 'Prompt Template',
-        value: config.promptTemplate.trim() ? '自定义模板' : '内置默认模板',
-        source: this.resolveSource(vscodeConfig, 'promptTemplate')
-      }
-    ];
-  }
 
   private async buildState(): Promise<PanelState> {
     const config = getConfig();
+    const vscodeConfig = vscode.workspace.getConfiguration('smartGitCommitter');
     const workspaceScopeEnabled = Boolean(vscode.workspace.workspaceFolders?.length);
     const hasSecretApiKey = await hasApiKey(this.context);
     const hasSettingApiKey = Boolean(config.apiKeyFromSettings?.trim());
+    const apiKeySource = hasSecretApiKey ? 'secretStorage' : hasSettingApiKey ? 'settings' : 'none';
 
     return {
       hasWorkspace: workspaceScopeEnabled,
       hasApiKey: hasSecretApiKey || hasSettingApiKey,
-      apiKeySource: hasSecretApiKey ? 'secretStorage' : hasSettingApiKey ? 'settings' : 'none',
-      scope: workspaceScopeEnabled ? 'workspace' : 'user',
+      apiKeySource,
+      apiKeyValue: apiKeySource === 'settings' ? config.apiKeyFromSettings : undefined,
+      workspaceOverrides: this.getWorkspaceOverrides(vscodeConfig),
       baseURL: config.baseURL,
       model: config.model,
       recentCommitCount: config.recentCommitCount,
@@ -416,8 +344,7 @@ export class SettingsPanel {
       autoStageUntracked: config.autoStageUntracked,
       messageStyle: config.messageStyle,
       languageMode: config.languageMode,
-      promptTemplate: config.promptTemplate,
-      effectiveConfigs: this.buildEffectiveItems(config)
+      promptTemplate: config.promptTemplate
     };
   }
 
@@ -446,13 +373,10 @@ export class SettingsPanel {
     :root {
       --font-family: var(--vscode-font-family, "Segoe UI", sans-serif);
       --font-size: var(--vscode-font-size, 13px);
-      --line-height: 1.45;
       --bg: var(--vscode-settings-editorBackground, var(--vscode-editor-background));
       --fg: var(--vscode-settings-textInputForeground, var(--vscode-foreground));
       --muted: var(--vscode-descriptionForeground);
       --line: color-mix(in srgb, var(--vscode-panel-border) 65%, transparent);
-      --row-focus-bg: var(--vscode-settings-focusedRowBackground, color-mix(in srgb, var(--vscode-list-hoverBackground) 35%, transparent));
-      --row-focus-border: var(--vscode-settings-focusedRowBorder, var(--vscode-focusBorder));
       --input-bg: var(--vscode-settings-textInputBackground, var(--vscode-input-background));
       --input-border: var(--vscode-settings-textInputBorder, var(--vscode-input-border));
       --focus-border: var(--vscode-focusBorder);
@@ -463,486 +387,215 @@ export class SettingsPanel {
       --button2-fg: var(--vscode-button-secondaryForeground);
       --button2-hover: var(--vscode-button-secondaryHoverBackground);
     }
-
     * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--fg); font-family: var(--font-family); font-size: var(--font-size); margin: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+    
+    .header { padding: 20px 24px 0; flex-shrink: 0; }
+    .header h1 { margin: 0 0 4px; font-size: 22px; font-weight: 500; }
+    .header p { margin: 0; color: var(--muted); font-size: 13px; }
 
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--fg);
-      font-family: var(--font-family);
-      font-size: var(--font-size);
-      line-height: var(--line-height);
-    }
+    .tabs { display: flex; border-bottom: 1px solid var(--line); margin: 20px 24px 0; flex-shrink: 0; }
+    .tab { padding: 8px 16px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--muted); font-size: 13px; }
+    .tab:hover { color: var(--fg); }
+    .tab.active { color: var(--fg); border-bottom-color: var(--focus-border); font-weight: 600; }
 
-    .container {
-      max-width: 880px;
-      margin: 0 auto;
-      padding: 20px 20px 34px;
-    }
-
-    .header {
-      margin-bottom: 16px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .header h1 {
-      margin: 0;
-      font-size: 22px;
-      font-weight: 500;
-    }
-
-    .header-desc {
-      margin: 6px 0 0;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .top-summary {
-      margin-bottom: 22px;
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-
-    .summary-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 8px;
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--line);
-      background: color-mix(in srgb, var(--bg) 92%, transparent);
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    .summary-right {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 6px;
-    }
-
-    .summary-badges {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-
-    .summary-actions {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }
-
-    .badge {
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 1px 8px;
-      font-size: 11px;
-      color: var(--muted);
-      background: var(--bg);
-    }
-
-    .badge.ok {
-      color: var(--vscode-terminal-ansiGreen);
-      border-color: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 45%, transparent);
-    }
-
-    .badge.warn {
-      color: var(--vscode-terminal-ansiYellow);
-      border-color: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 45%, transparent);
-    }
-
-    .badge.dirty {
-      color: var(--vscode-terminal-ansiYellow);
-      border-color: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 45%, transparent);
-      background: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 12%, transparent);
-    }
-
-    .badge.clean {
-      color: var(--muted);
-      border-color: var(--line);
-      background: var(--bg);
-    }
-
-    .table-container {
-      overflow-x: auto;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      text-align: left;
-      font-size: 12px;
-    }
-
-    th, td {
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--line);
-      vertical-align: top;
-    }
-
-    th {
-      color: var(--muted);
-      font-weight: 600;
-      background: color-mix(in srgb, var(--bg) 90%, transparent);
-    }
-
-    tr:last-child td {
-      border-bottom: none;
-    }
-
-    .source-tag {
-      display: inline-block;
-      padding: 1px 8px;
-      border-radius: 999px;
-      border: 1px solid currentColor;
-      color: var(--muted);
-      font-size: 11px;
-    }
-
-    .setting-group {
-      margin-bottom: 30px;
-    }
-
-    .group-actions {
-      max-width: 720px;
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 8px;
-      padding-top: 10px;
-      border-top: 1px solid var(--line);
-    }
-
-    .section-title {
-      margin: 0 0 10px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--line);
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.25px;
-    }
-
-    .setting-item {
-      max-width: 720px;
-      padding: 12px 10px 14px;
-      border-bottom: 1px solid var(--line);
-      border-left: 2px solid transparent;
-      transition: background-color 0.12s ease-in-out, border-left-color 0.12s ease-in-out;
-    }
-
-    .setting-item:last-child {
-      border-bottom: none;
-    }
-
-    .setting-item:focus-within {
-      background: var(--row-focus-bg);
-      border-left-color: var(--row-focus-border);
-    }
-
-    .setting-label {
-      display: block;
-      margin-bottom: 4px;
-      font-size: 13px;
-      font-weight: 600;
-    }
-
-    .setting-desc {
-      margin-bottom: 8px;
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    input[type="text"], input[type="number"], select, textarea {
-      width: 100%;
-      max-width: 560px;
-      padding: 6px 9px;
-      border: 1px solid var(--input-border);
-      border-radius: 3px;
-      background: var(--input-bg);
-      color: var(--fg);
-      font: inherit;
-    }
-
-    textarea {
-      max-width: 100%;
-      min-height: 165px;
-      resize: vertical;
-      font-family: "Consolas", "Menlo", monospace;
-      font-size: 12px;
-      line-height: 1.4;
-    }
-
-    input:focus, select:focus, textarea:focus {
-      outline: 1px solid var(--focus-border);
-      outline-offset: -1px;
-      border-color: var(--focus-border);
-    }
-
-    select { cursor: pointer; }
-
-    .checkbox-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-    }
-
-    .checkbox-item input[type="checkbox"] {
-      margin-top: 4px;
-      width: 16px;
-      height: 16px;
-      cursor: pointer;
-    }
-
-    .token-bar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-bottom: 8px;
-    }
-
-    .token {
-      padding: 2px 8px;
-      border: 1px solid var(--line);
-      border-radius: 3px;
-      background: var(--input-bg);
-      color: var(--muted);
-      font-family: "Consolas", monospace;
-      font-size: 11px;
-      cursor: pointer;
-    }
-
-    .token:hover {
-      color: var(--fg);
-      border-color: var(--focus-border);
-    }
-
-    .text-link {
-      margin-left: 8px;
-      border: none;
-      background: transparent;
-      color: var(--vscode-textLink-foreground);
-      font-size: 12px;
-      cursor: pointer;
-      text-decoration: underline;
-      padding: 0;
-      font: inherit;
-    }
-
-    .text-link:hover {
-      color: var(--vscode-textLink-activeForeground);
-    }
-
-    .pattern-list {
-      max-width: 560px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .pattern-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .pattern-row input {
-      flex: 1;
-      max-width: none;
-    }
-
-    .pattern-actions {
-      margin-top: 8px;
-    }
-
-    .btn {
-      padding: 6px 12px;
-      border: 1px solid transparent;
-      border-radius: 3px;
-      background: var(--button-bg);
-      color: var(--button-fg);
-      font-size: 12px;
-      cursor: pointer;
-    }
-
-    .btn:hover {
-      background: var(--button-hover);
-    }
-
-    .btn-secondary {
-      background: var(--button2-bg);
-      color: var(--button2-fg);
-    }
-
-    .btn-secondary:hover {
-      background: var(--button2-hover);
-    }
-
+    .tab-content { display: none; padding: 24px 24px 80px; max-width: 800px; flex: 1; overflow-y: auto; width: 100%; }
+    .tab-content.active { display: block; }
+    
+    .setting-item { margin-bottom: 24px; }
+    .setting-label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 13px; }
+    .setting-desc { color: var(--muted); font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+    
+    .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: normal; background: color-mix(in srgb, var(--muted) 15%, transparent); color: var(--muted); vertical-align: middle; margin-left: 6px; border: 1px solid var(--line); }
+    .badge.ok { color: var(--vscode-terminal-ansiGreen); border-color: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 45%, transparent); background: transparent; }
+    .badge.warn { color: var(--vscode-terminal-ansiYellow); border-color: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 45%, transparent); background: transparent; }
+    
+    input[type="text"], input[type="password"], input[type="number"], select, textarea { width: 100%; max-width: 500px; padding: 6px 8px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg); border-radius: 3px; font-family: inherit; font-size: 13px; }
+    input:disabled { opacity: 0.6; cursor: not-allowed; }
+    textarea { max-width: 100%; min-height: 200px; font-family: "Consolas", monospace; resize: vertical; }
+    input:focus:not(:disabled), select:focus:not(:disabled), textarea:focus:not(:disabled) { outline: 1px solid var(--focus-border); border-color: var(--focus-border); }
+    
+    .checkbox-item { display: flex; align-items: flex-start; gap: 8px; }
+    .checkbox-item input { margin-top: 3px; cursor: pointer; }
+    .checkbox-item label { font-weight: 600; margin-bottom: 2px; display: block; }
+    .checkbox-item .setting-desc { margin-bottom: 0; }
+    
+    .btn { padding: 6px 12px; border: 1px solid transparent; background: var(--button-bg); color: var(--button-fg); border-radius: 3px; cursor: pointer; font-size: 13px; }
+    .btn:hover { background: var(--button-hover); }
+    .btn-secondary { background: var(--button2-bg); color: var(--button2-fg); border-color: var(--button2-bg); }
+    .btn-secondary:hover { background: var(--button2-hover); }
+    
+    .text-link { background: none; border: none; padding: 0; color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline; font-size: 12px; margin-left: 8px; }
+    .text-link:hover { color: var(--vscode-textLink-activeForeground); }
+    
+    .bottom-bar { position: fixed; bottom: 0; left: 0; right: 0; background: color-mix(in srgb, var(--bg) 95%, transparent); backdrop-filter: blur(8px); border-top: 1px solid var(--line); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; z-index: 100; }
+    
+    .flex-row { display: flex; gap: 8px; align-items: center; }
+    
+    .pattern-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; max-width: 500px; }
+    .pattern-row { display: flex; gap: 8px; }
+    .pattern-row input { flex: 1; }
+    
+    .token-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    .token { padding: 2px 8px; border: 1px solid var(--line); border-radius: 3px; background: var(--input-bg); color: var(--muted); font-family: "Consolas", monospace; font-size: 11px; cursor: pointer; }
+    .token:hover { color: var(--fg); border-color: var(--focus-border); }
+    
+    .override-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+    .override-grid label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--fg); font-size: 12px; width: fit-content; }
+    .override-grid label.disabled { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>Smart Git Committer</h1>
-      <p class="header-desc">配置会按选择作用域保存。下方先展示当前生效配置，再编辑表单。</p>
-    </div>
 
-    <div class="top-summary">
-      <div class="summary-head">
-        <span>当前生效配置（合并 Workspace/User/Default 后）</span>
-        <div class="summary-right">
-          <div class="summary-badges">
-            <span class="badge" id="scopeBadge">Scope: -</span>
-            <span class="badge warn" id="apiStatusBadge">API Key: 未配置</span>
-            <span class="badge" id="apiKeySourceBadge">来源: -</span>
-          </div>
-          <div class="summary-actions">
-            <button class="btn btn-secondary" id="setApiKey">设置/更新 API Key</button>
-            <button class="btn btn-secondary" id="testConnection">测试连接</button>
-            <button class="btn btn-secondary" id="refresh">刷新当前视图</button>
-          </div>
-        </div>
+  <div class="header">
+    <h1>Smart Git Committer</h1>
+    <p>快速配置您的 AI 提交信息生成器。</p>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-target="tab-general">通用与连接</div>
+    <div class="tab" data-target="tab-rules">项目与规则</div>
+    <div class="tab" data-target="tab-prompt">高级 Prompt</div>
+  </div>
+
+  <div id="tab-general" class="tab-content active">
+    <div class="setting-item">
+      <label class="setting-label">API Key 凭证 <span id="apiStatusBadge" class="badge">检查中</span></label>
+      <div class="setting-desc">提供给 AI 调用的私钥。推荐通过 SecretStorage 安全保存。当前来源: <strong id="apiKeySourceText">-</strong></div>
+      <div class="flex-row" style="margin-bottom: 8px;">
+         <input id="apiKeyValue" type="password" placeholder="正在加载..." style="max-width:300px;" />
+         <button class="btn btn-secondary" id="toggleApiKeyVisible" type="button" style="display:none; min-width:32px; padding: 6px 8px;" title="显示/隐藏明文">👁</button>
       </div>
-      <div class="table-container">
-        <table>
-          <thead>
-            <tr><th>配置项</th><th style="width:55%">当前值</th><th>来源</th></tr>
-          </thead>
-          <tbody id="effectiveConfigRows"></tbody>
-        </table>
+      <div class="flex-row">
+        <button class="btn btn-secondary" id="setApiKey">安全录入到 SecretStorage</button>
+        <button class="btn btn-secondary" id="testConnection">测试连接</button>
       </div>
     </div>
+    
+    <div class="setting-item">
+      <label class="setting-label" for="baseURL">Base URL <span class="badge">全局专属 (User)</span></label>
+      <div class="setting-desc">AI 模型调用的端点地址。<button type="button" class="text-link" id="openMoleApiInvite">获取 MoleAPI 邀请</button></div>
+      <input id="baseURL" type="text" placeholder="https://api.moleapi.com" />
+    </div>
 
-    <div class="setting-group">
-      <h2 class="section-title">基础配置</h2>
-      <div class="setting-item">
-        <label class="setting-label">配置作用域 (Scope)</label>
-        <div class="setting-desc" id="scopeHint">选择配置保存的位置。</div>
-        <select id="scope">
-          <option value="user">User (全局适用所有工作区)</option>
-          <option value="workspace">Workspace (仅当前工作区)</option>
-        </select>
+    <div class="setting-item">
+      <label class="setting-label" for="model">Model <span class="badge">全局专属 (User)</span></label>
+      <div class="setting-desc">指定使用的模型（如 gpt-4o-mini）。</div>
+      <input id="model" type="text" placeholder="gpt-4o-mini" />
+    </div>
+  </div>
+
+  <div id="tab-rules" class="tab-content">
+    <div class="setting-item" style="background: color-mix(in srgb, var(--input-bg) 60%, transparent); padding: 16px; border-radius: 6px; border: 1px solid var(--line); margin-bottom: 24px;">
+      <h3 style="margin-top: 0; margin-bottom: 6px; font-size: 14px;">工作区属性覆盖 (Workspace Overrides)</h3>
+      <div class="setting-desc" style="margin-bottom: 12px; color: var(--muted);" id="workspaceOverrideHint">
+        勾选下方的配置项，表示你希望该选项被独占保存到当前工作区的 <code>.vscode/settings.json</code> 中。未勾选的项统一退回读取并使用全局 User 级别的后备配置。
       </div>
-
-      <div class="setting-item">
-        <label class="setting-label" for="baseURL">Base URL</label>
-        <div class="setting-desc">
-          AI 模型调用的 API 地址（默认 MoleAPI，也可填写其他兼容中转服务）。
-          <button type="button" class="text-link" id="openMoleApiInvite">打开 MoleAPI 邀请链接</button>
-        </div>
-        <input id="baseURL" type="text" placeholder="https://api.moleapi.com" />
-      </div>
-
-      <div class="setting-item">
-        <label class="setting-label" for="model">Model</label>
-        <div class="setting-desc">指定使用的 AI 模型，例如 <code>gpt-4o-mini</code> 或 <code>claude-3-haiku</code>。</div>
-        <input id="model" type="text" placeholder="gpt-4o-mini" />
-      </div>
-
-      <div class="setting-item">
-        <label class="setting-label" for="recentCommitCount">参考最近提交数量 (1-10)</label>
-        <div class="setting-desc">提供给 AI 参考风格的最近几次本地提交记录的数量。</div>
-        <input id="recentCommitCount" type="number" min="1" max="10" />
-      </div>
-
-      <div class="setting-item">
-        <label class="setting-label" for="maxDiffChars">Diff 字符预算 (2000-200000)</label>
-        <div class="setting-desc">限制发送给 AI 的最大 Diff 长度，超出会自动裁剪，避免超时和成本飙升。</div>
-        <input id="maxDiffChars" type="number" min="2000" max="200000" />
-      </div>
-
-      <div class="setting-item">
-        <label class="setting-label" for="includeGlobs">仅包含文件 (Include Globs)</label>
-        <div class="setting-desc">可选：仅分析这些模式匹配的文件。可添加多条规则。</div>
-        <div id="includeGlobsList" class="pattern-list"></div>
-        <div class="pattern-actions">
-          <button class="btn btn-secondary" id="addIncludeGlob" type="button">添加模式</button>
-        </div>
-      </div>
-
-      <div class="setting-item">
-        <label class="setting-label" for="excludeGlobs">排除文件 (Exclude Globs)</label>
-        <div class="setting-desc">排除无关改动文件。可添加多条规则，例如 <code>**/*.lock</code>、<code>dist/**</code>。</div>
-        <div id="excludeGlobsList" class="pattern-list"></div>
-        <div class="pattern-actions">
-          <button class="btn btn-secondary" id="addExcludeGlob" type="button">添加模式</button>
-        </div>
-      </div>
-
-      <div class="setting-item checkbox-item">
-        <input id="respectGitIgnore" type="checkbox" />
-        <div>
-          <label class="setting-label" for="respectGitIgnore" style="margin-bottom: 2px;">遵循项目 .gitignore</label>
-          <div class="setting-desc" style="margin-bottom: 0;">开启后会结合项目 .gitignore 规则过滤文件，避免无关文件参与 AI 分析。</div>
-        </div>
-      </div>
-
-      <div class="setting-item">
-        <label class="setting-label">提交信息风格 (Message Style)</label>
-        <div class="setting-desc">生成单行标题，还是附带详细正文解释。</div>
-        <select id="messageStyle">
-          <option value="title">仅生成简短 Title</option>
-          <option value="title+body">生成 Title + 详细 Body</option>
-        </select>
-      </div>
-
-      <div class="setting-item">
-        <label class="setting-label">语言模式 (Language Mode)</label>
-        <div class="setting-desc">生成的提交信息使用的语言倾向。</div>
-        <select id="languageMode">
-          <option value="auto">Auto (根据最近提交自动推断)</option>
-          <option value="zh">强制使用中文 (Chinese)</option>
-          <option value="en">强制使用英文 (English)</option>
-        </select>
-      </div>
-
-      <div class="setting-item checkbox-item" style="padding-bottom: 24px;">
-        <input id="autoStageUntracked" type="checkbox" />
-        <div>
-          <label class="setting-label" for="autoStageUntracked" style="margin-bottom: 2px;">自动暂存未跟踪文件</label>
-          <div class="setting-desc" id="autoStageHint" style="margin-bottom: 0;">当暂存区为空时，尝试分析并包含所有未跟踪文件变更。</div>
-        </div>
-      </div>
-
-      <div class="group-actions">
-        <button class="btn" id="saveBase">仅保存基础配置</button>
+      <div class="override-grid" id="overrideCheckboxes">
+        <label><input type="checkbox" value="recentCommitCount"> 参考历史数量</label>
+        <label><input type="checkbox" value="maxDiffChars"> 最大 Diff 长度控制</label>
+        <label><input type="checkbox" value="messageStyle"> 提交信息风格</label>
+        <label><input type="checkbox" value="languageMode"> 语言偏好</label>
+        <label><input type="checkbox" value="includeGlobs"> 仅处理指定文件</label>
+        <label><input type="checkbox" value="excludeGlobs"> 排除特定文件</label>
+        <label><input type="checkbox" value="respectGitIgnore"> 遵循 .gitignore</label>
+        <label><input type="checkbox" value="autoStageUntracked"> 自动介入未暂存文件</label>
+        <label><input type="checkbox" value="promptTemplate" id="chkPromptTemplate"> 高级 Prompt 模板</label>
       </div>
     </div>
 
-    <div class="setting-group">
-      <h2 class="section-title">高级 Prompt 模板</h2>
+    <div style="display: flex; gap: 24px; max-width: 600px; flex-wrap: wrap;">
+      <div class="setting-item" style="flex: 1; min-width: 250px;">
+        <label class="setting-label" for="messageStyle">提交信息风格</label>
+        <select id="messageStyle" style="max-width: 100%;">
+          <option value="title">仅生成单行标题 (Title)</option>
+          <option value="title+body">生成详细的标题 + 正文 (Title+Body)</option>
+        </select>
+      </div>
+
+      <div class="setting-item" style="flex: 1; min-width: 250px;">
+        <label class="setting-label" for="languageMode">语言偏好</label>
+        <select id="languageMode" style="max-width: 100%;">
+          <option value="auto">自动 (跟随最近的提交)</option>
+          <option value="zh">强制使用中文</option>
+          <option value="en">强制使用英文</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 24px; max-width: 600px; flex-wrap: wrap;">
+      <div class="setting-item" style="flex: 1; min-width: 250px;">
+        <label class="setting-label" for="recentCommitCount">参考历史数量</label>
+        <div class="setting-desc">让 AI 学习您的近期风格(1-10)。</div>
+        <input id="recentCommitCount" type="number" min="1" max="10" style="max-width: 100px;" />
+      </div>
+
+      <div class="setting-item" style="flex: 1; min-width: 250px;">
+        <label class="setting-label" for="maxDiffChars">最大 Diff 长度控制</label>
+        <div class="setting-desc">避免过大变更导致超时或费用超支。</div>
+        <input id="maxDiffChars" type="number" min="2000" max="200000" style="max-width: 100px;" />
+      </div>
+    </div>
+
+    <div class="setting-item">
+      <label class="setting-label">仅处理指定文件 (Include Globs)</label>
+      <div class="setting-desc">若配置，仅当变更文件匹配时才作分析。留空处理全部。</div>
+      <div id="includeGlobsList" class="pattern-list"></div>
+      <button class="btn btn-secondary" id="addIncludeGlob" style="padding: 4px 10px; font-size: 12px;">+ 添加规则</button>
+    </div>
+
+    <div class="setting-item">
+      <label class="setting-label">排除特定文件 (Exclude Globs)</label>
+      <div class="setting-desc">忽略锁定文件或构建目录，避免污染上下文。</div>
+      <div id="excludeGlobsList" class="pattern-list"></div>
+      <button class="btn btn-secondary" id="addExcludeGlob" style="padding: 4px 10px; font-size: 12px;">+ 添加排除</button>
+    </div>
+
+    <div class="setting-item checkbox-item">
+      <input id="respectGitIgnore" type="checkbox" />
+      <div>
+        <label for="respectGitIgnore">遵循项目 .gitignore 规范</label>
+        <div class="setting-desc">开启则跳过已被 .gitignore 定义排出的文件。</div>
+      </div>
+    </div>
+
+    <div class="setting-item checkbox-item">
+      <input id="autoStageUntracked" type="checkbox" />
+      <div>
+        <label for="autoStageUntracked">自动介入未暂存(Untracked)文件</label>
+        <div class="setting-desc">当未执行 git add 时，尝试合并并未跟踪的变更。</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-prompt" class="tab-content">
+    <div class="setting-item">
+      <label class="setting-label">定制化 Prompt 模板 <span id="promptTemplateBadge" class="badge">加载中</span></label>
+      <div class="setting-desc">若留白将走优化过的基础引擎。若修改须内嵌代码 <code>{{DIFF}}</code> 与 <code>{{RECENT_COMMITS}}</code>。</div>
+      <div class="token-bar">
+        <button type="button" class="token">{{DIFF}}</button>
+        <button type="button" class="token">{{RECENT_COMMITS}}</button>
+        <button type="button" class="token">{{MESSAGE_STYLE_RULES}}</button>
+        <button type="button" class="token">{{LANGUAGE_INSTRUCTION}}</button>
+        <button type="button" class="token">{{STYLE_PREFERENCE}}</button>
+        <button type="button" class="token">{{ALLOWED_TYPES}}</button>
+      </div>
+      <textarea id="promptTemplate" placeholder="留空以使用默认内置模板..."></textarea>
       
-      <div class="setting-item" style="max-width: 100%; border-bottom: none;">
-        <label class="setting-label">自定义模板内容</label>
-        <div class="setting-desc">
-          如果留空，将使用内置提示词。若使用自定义模板，内容中<strong>必须包含</strong>占位符：<code>{{DIFF}}</code> 和 <code>{{RECENT_COMMITS}}</code>。
-        </div>
-        
-        <div class="token-bar">
-          <button type="button" class="token">{{DIFF}}</button>
-          <button type="button" class="token">{{RECENT_COMMITS}}</button>
-          <button type="button" class="token">{{MESSAGE_STYLE_RULES}}</button>
-          <button type="button" class="token">{{LANGUAGE_INSTRUCTION}}</button>
-          <button type="button" class="token">{{STYLE_PREFERENCE}}</button>
-          <button type="button" class="token">{{ALLOWED_TYPES}}</button>
-        </div>
-        
-        <textarea id="promptTemplate" placeholder="留空使用内置模板..."></textarea>
-        <div class="setting-desc" id="promptTemplateHint" style="margin-top: 8px;"></div>
-
-        <div style="display:flex; align-items:center; gap:8px; margin-top: 12px; flex-wrap:wrap;">
-          <span class="badge" id="promptTemplateDirty">模板未改动</span>
-          <button class="btn" id="savePromptTemplate">仅保存高级模板</button>
-          <button class="btn btn-secondary" id="resetPromptTemplate">清空为内置模板（未保存）</button>
-        </div>
+      <div class="flex-row" style="margin-top: 12px;">
+        <button class="btn btn-secondary" id="resetPromptTemplate">还原为空 (撤消)</button>
+        <div class="setting-desc" id="promptTemplateHint" style="margin-bottom: 0;"></div>
       </div>
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <div class="flex-row">
+      <button class="btn btn-secondary" id="refresh" style="background: transparent; color: var(--muted); border: 1px solid var(--line);">↺ 获取最新状态</button>
+    </div>
+    <div class="flex-row">
+      <button class="btn btn-secondary" id="savePromptTemplate" style="display:none; border-color: var(--button-bg);">保存 Prompt 设置</button>
+      <button class="btn" id="saveBase">保存各项原则</button>
     </div>
   </div>
 
@@ -952,116 +605,121 @@ export class SettingsPanel {
     let promptTemplateSavedValue = '';
     let testConnectionPending = false;
 
-    function updateScopeHint() {
-      const scope = el('scope').value;
-      const optWS = el('scope').querySelector('option[value="workspace"]');
-      if (optWS && optWS.disabled) {
-        el('scopeHint').innerHTML = '未检测到工作区，只能保存为<strong>全局用户级 (User)</strong> 设置。';
-        el('scopeBadge').textContent = 'Scope: User';
-      } else if (scope === 'workspace') {
-        el('scopeHint').innerHTML = '将保存至当前项目的 <code>.vscode/settings.json</code>，跟随 Git 仓库共享。';
-        el('scopeBadge').textContent = 'Scope: Workspace';
+    // Tabs logic
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab, .tab-content').forEach(e => e.classList.remove('active'));
+        tab.classList.add('active');
+        el(tab.dataset.target).classList.add('active');
+        
+        const isPrompt = tab.dataset.target === 'tab-prompt';
+        el('savePromptTemplate').style.display = isPrompt ? 'inline-block' : 'none';
+        el('saveBase').textContent = isPrompt ? '保存通用与规则项目配置' : '保存本页设定';
+        
+        if (isPrompt) {
+            // When user edits prompt, automatically check the override box for promptTemplate if workspace is available
+            const ptChk = el('chkPromptTemplate');
+            if(ptChk && !ptChk.disabled && !ptChk.checked && el('promptTemplate').value.trim() !== '') {
+               // We don't force check it, just an idea. We will leave it to manual for now.
+            }
+        }
+      });
+    });
+
+    function updateApiState(state) {
+      const b = el('apiStatusBadge');
+      b.textContent = state.hasApiKey ? '已就绪' : '缺少许可';
+      b.className = state.hasApiKey ? 'badge ok' : 'badge warn';
+      
+      const m = { secretStorage: 'SecretStorage (安全)', settings: 'settings.json (明文)', none: '缺少录入' };
+      el('apiKeySourceText').textContent = m[state.apiKeySource] || '-';
+
+      const keyInput = el('apiKeyValue');
+      const keyToggle = el('toggleApiKeyVisible');
+      if (state.apiKeySource === 'secretStorage') {
+         keyInput.value = '••••••••••••••••••••••••';
+         keyInput.disabled = true;
+         keyToggle.style.display = 'none';
+      } else if (state.apiKeySource === 'settings') {
+         keyInput.value = state.apiKeyValue || '';
+         keyInput.disabled = false;
+         keyToggle.style.display = 'inline-block';
+         keyToggle.textContent = '👁';
+         keyInput.type = 'password';
       } else {
-        el('scopeHint').innerHTML = '将保存至编辑器的用户全局配置，作为所有此插件的默认后备选项。';
-        el('scopeBadge').textContent = 'Scope: User';
+         keyInput.value = '';
+         keyInput.disabled = false;
+         keyToggle.style.display = 'none';
       }
     }
 
-    function updateAutoStageHint() {
-      el('autoStageHint').textContent = el('autoStageUntracked').checked
-        ? '已勾选：生成时将会连同工作区未加入暂存的文件一起提交。' : '未勾选：严谨模式，仅针对您 git add 过的变更生成信息。';
-    }
-
-    function updatePromptTemplateHint() {
-      const current = el('promptTemplate').value.trim();
-      const dirty = current !== promptTemplateSavedValue;
-      const dirtyBadge = el('promptTemplateDirty');
-      dirtyBadge.className = dirty ? 'badge dirty' : 'badge clean';
-      dirtyBadge.textContent = dirty ? '模板有未保存修改' : '模板未改动';
-      el('promptTemplateHint').innerHTML = current
-        ? '<span style="color:var(--vscode-charts-yellow)">当前编辑的是自定义模板。</span>'
-        : '留空时使用内置默认模板。';
-    }
-
-    function updateApiState(hasApiKey, apiKeySource) {
-      const b = el('apiStatusBadge');
-      b.textContent = hasApiKey ? 'API Key: 已就绪' : 'API Key: 亟待设置';
-      b.className = hasApiKey ? 'badge ok' : 'badge warn';
-      const m = { secretStorage: 'SecretStorage (安全)', settings: 'settings.json (明文,不推荐)', none: '缺失' };
-      el('apiKeySourceBadge').textContent = '来源: ' + (m[apiKeySource] || '未知');
-    }
-
-    function renderEffectiveConfigs(items) {
-      el('effectiveConfigRows').innerHTML = '';
-      items.forEach(item => {
-        const tr = document.createElement('tr');
-        const k = document.createElement('td'); k.textContent = item.label; k.style.fontWeight = '500';
-        const v = document.createElement('td'); v.style.fontFamily = 'monospace';
-        v.textContent = item.value.length > 70 ? item.value.substring(0, 67) + '...' : item.value;
-        const s = document.createElement('td');
-        const sourceMap = { workspace: 'Workspace', user: 'User', default: 'Default' };
-        s.innerHTML = '<span class="source-tag" style="border-color:' + (item.source==='workspace'?'#3b82f6':item.source==='user'?'#10b981':'currentColor') + '; color:' + (item.source==='workspace'?'#3b82f6':item.source==='user'?'#10b981':'currentColor') + '">' + sourceMap[item.source] + '</span>';
-        tr.append(k, v, s); el('effectiveConfigRows').appendChild(tr);
-      });
-    }
+    el('toggleApiKeyVisible').addEventListener('click', (e) => {
+        const keyInput = el('apiKeyValue');
+        if (keyInput.type === 'password') {
+            keyInput.type = 'text';
+            e.target.textContent = '🔒';
+        } else {
+            keyInput.type = 'password';
+            e.target.textContent = '👁';
+        }
+    });
 
     function createPatternRow(container, value, placeholder) {
       const row = document.createElement('div');
       row.className = 'pattern-row';
       const input = document.createElement('input');
-      input.type = 'text';
-      input.value = value || '';
-      input.placeholder = placeholder || '';
+      input.type = 'text'; input.value = value || ''; input.placeholder = placeholder || '';
       const removeBtn = document.createElement('button');
-      removeBtn.type = 'button';
-      removeBtn.className = 'btn btn-secondary';
-      removeBtn.textContent = '移除';
+      removeBtn.type = 'button'; removeBtn.className = 'btn btn-secondary'; removeBtn.textContent = 'x'; removeBtn.style.padding = '4px 8px'; removeBtn.title = '移除';
       removeBtn.addEventListener('click', () => {
         row.remove();
-        if (container.children.length === 0) {
-          container.appendChild(createPatternRow(container, '', placeholder));
-        }
+        if (container.children.length === 0) container.appendChild(createPatternRow(container, '', placeholder));
       });
       row.append(input, removeBtn);
       return row;
     }
 
     function renderPatternList(containerId, patterns, placeholder) {
-      const container = el(containerId);
-      container.innerHTML = '';
+      const container = el(containerId); container.innerHTML = '';
       const safePatterns = Array.isArray(patterns) && patterns.length > 0 ? patterns : [''];
-      safePatterns.forEach((pattern) => {
-        container.appendChild(createPatternRow(container, pattern, placeholder));
-      });
-    }
-
-    function appendPatternRow(containerId, placeholder) {
-      const container = el(containerId);
-      container.appendChild(createPatternRow(container, '', placeholder));
+      safePatterns.forEach(pattern => container.appendChild(createPatternRow(container, pattern, placeholder)));
     }
 
     function readPatternList(containerId) {
-      const container = el(containerId);
-      const inputs = container.querySelectorAll('input[type="text"]');
-      return Array.from(inputs)
-        .map((input) => input.value.trim())
-        .filter((value) => value.length > 0);
+      return Array.from(el(containerId).querySelectorAll('input[type="text"]'))
+        .map(input => input.value.trim()).filter(v => v.length > 0);
     }
 
-    function setTestConnectionPending(pending) {
-      testConnectionPending = pending;
-      const btn = el('testConnection');
-      btn.disabled = pending;
-      btn.textContent = pending ? '测试中...' : '测试连接';
+    function updatePromptStateLabel(val) {
+      const badge = el('promptTemplateBadge');
+      if(val.trim().length > 0) {
+        badge.textContent = '已定制化';
+        badge.className = 'badge warn';
+      } else {
+        badge.textContent = '内置生效';
+        badge.className = 'badge ok';
+      }
+    }
+
+    function getWorkspaceOverrides() {
+      return Array.from(document.querySelectorAll('#overrideCheckboxes input[type="checkbox"]:checked')).map(cb => cb.value);
     }
 
     function setState(state) {
-      const optWS = el('scope').querySelector('option[value="workspace"]');
-      if (optWS) optWS.disabled = !state.hasWorkspace;
-      el('scope').value = state.hasWorkspace ? state.scope : 'user';
+      const hint = el('workspaceOverrideHint');
+      if (!state.hasWorkspace) {
+         hint.innerHTML = '<span style="color:var(--vscode-terminal-ansiYellow)">未发现有效工作区，下方复选框已被禁用。所有配置将统一写入全局 User 中。</span>';
+      } else {
+         hint.innerHTML = '勾选下方的配置项，表示你希望该选项被独占保存到当前工作区的 <code>.vscode/settings.json</code> 中。未勾选的项统一退回读取并使用全局 User 级别的后备配置。';
+      }
 
-      el('baseURL').value = state.baseURL;
-      el('model').value = state.model;
+      document.querySelectorAll('#overrideCheckboxes input[type="checkbox"]').forEach(cb => {
+         cb.checked = state.workspaceOverrides.includes(cb.value);
+         cb.disabled = !state.hasWorkspace;
+         cb.parentElement.className = !state.hasWorkspace ? 'disabled' : '';
+      });
+
+      el('baseURL').value = state.baseURL; el('model').value = state.model;
       el('recentCommitCount').value = String(state.recentCommitCount);
       el('maxDiffChars').value = String(state.maxDiffChars);
       renderPatternList('includeGlobsList', state.includeGlobs, 'src/**');
@@ -1070,93 +728,66 @@ export class SettingsPanel {
       el('autoStageUntracked').checked = Boolean(state.autoStageUntracked);
       el('messageStyle').value = state.messageStyle;
       el('languageMode').value = state.languageMode;
+      
       el('promptTemplate').value = state.promptTemplate;
       promptTemplateSavedValue = state.promptTemplate.trim();
+      updatePromptStateLabel(state.promptTemplate);
 
-      updatePromptTemplateHint(); updateAutoStageHint(); updateScopeHint();
-      updateApiState(Boolean(state.hasApiKey), state.apiKeySource);
-      renderEffectiveConfigs(state.effectiveConfigs || []);
-      if (testConnectionPending) {
-        setTestConnectionPending(false);
-      }
+      updateApiState(state);
+      
+      if (testConnectionPending) { testConnectionPending = false; el('testConnection').textContent = '测试连接'; el('testConnection').disabled = false; }
     }
 
     window.addEventListener('message', e => { if (e.data?.type === 'state') setState(e.data.payload); });
-
-    el('scope').addEventListener('change', updateScopeHint);
-    el('autoStageUntracked').addEventListener('change', updateAutoStageHint);
-    el('promptTemplate').addEventListener('input', updatePromptTemplateHint);
+    
+    el('promptTemplate').addEventListener('input', (e) => updatePromptStateLabel(e.target.value));
+    
     el('openMoleApiInvite').addEventListener('click', () => vscode.postMessage({ type: 'openMoleApiInvite' }));
-    el('addIncludeGlob').addEventListener('click', () => appendPatternRow('includeGlobsList', 'src/**'));
-    el('addExcludeGlob').addEventListener('click', () => appendPatternRow('excludeGlobsList', '**/*.lock'));
+    el('addIncludeGlob').addEventListener('click', () => el('includeGlobsList').appendChild(createPatternRow(el('includeGlobsList'), '', 'src/**')));
+    el('addExcludeGlob').addEventListener('click', () => el('excludeGlobsList').appendChild(createPatternRow(el('excludeGlobsList'), '', '**/*.lock')));
     
     document.querySelectorAll('.token').forEach(btn => {
       btn.addEventListener('click', () => {
         const t = el('promptTemplate'); const text = btn.textContent;
         const s = t.selectionStart, e = t.selectionEnd;
         t.value = t.value.substring(0, s) + text + t.value.substring(e);
-        t.selectionStart = t.selectionEnd = s + text.length; t.focus(); updatePromptTemplateHint();
+        t.selectionStart = t.selectionEnd = s + text.length; t.focus();
+        updatePromptStateLabel(t.value);
       });
     });
 
     el('saveBase').addEventListener('click', () => vscode.postMessage({ type: 'saveBase', payload: {
-      scope: el('scope').value,
-      baseURL: el('baseURL').value,
-      model: el('model').value,
-      recentCommitCount: Number(el('recentCommitCount').value),
-      maxDiffChars: Number(el('maxDiffChars').value),
-      includeGlobs: readPatternList('includeGlobsList'),
-      excludeGlobs: readPatternList('excludeGlobsList'),
-      respectGitIgnore: el('respectGitIgnore').checked,
-      autoStageUntracked: el('autoStageUntracked').checked,
-      messageStyle: el('messageStyle').value,
-      languageMode: el('languageMode').value
+      workspaceOverrides: getWorkspaceOverrides(),
+      apiKeyValue: el('apiKeyValue').disabled ? undefined : el('apiKeyValue').value,
+      baseURL: el('baseURL').value, model: el('model').value,
+      recentCommitCount: Number(el('recentCommitCount').value), maxDiffChars: Number(el('maxDiffChars').value),
+      includeGlobs: readPatternList('includeGlobsList'), excludeGlobs: readPatternList('excludeGlobsList'),
+      respectGitIgnore: el('respectGitIgnore').checked, autoStageUntracked: el('autoStageUntracked').checked,
+      messageStyle: el('messageStyle').value, languageMode: el('languageMode').value
     }}));
 
     el('savePromptTemplate').addEventListener('click', () => {
-      const promptTemplate = el('promptTemplate').value;
-      const trimmed = promptTemplate.trim();
-      if (trimmed && (!trimmed.includes('{{DIFF}}') || !trimmed.includes('{{RECENT_COMMITS}}'))) {
-        window.alert('模板至少需要包含 {{DIFF}} 与 {{RECENT_COMMITS}}。');
-        return;
+      const template = el('promptTemplate').value;
+      if (template.trim() && (!template.includes('{{DIFF}}') || !template.includes('{{RECENT_COMMITS}}'))) {
+        return window.alert('模板必须配置注入 {{DIFF}} 与 {{RECENT_COMMITS}}。');
       }
-      const confirmed = window.confirm('确认仅保存高级模板配置吗？');
-      if (!confirmed) {
-        return;
-      }
-      vscode.postMessage({
-        type: 'savePromptTemplate',
-        payload: {
-          scope: el('scope').value,
-          promptTemplate
-        }
-      });
+      vscode.postMessage({ type: 'savePromptTemplate', payload: { workspaceOverrides: getWorkspaceOverrides(), promptTemplate: template } });
     });
 
-    el('resetPromptTemplate').addEventListener('click', () => {
-      el('promptTemplate').value = '';
-      updatePromptTemplateHint();
-    });
+    el('resetPromptTemplate').addEventListener('click', () => { el('promptTemplate').value = ''; updatePromptStateLabel(''); });
     el('setApiKey').addEventListener('click', () => vscode.postMessage({ type: 'setApiKey' }));
     el('testConnection').addEventListener('click', () => {
-      if (testConnectionPending) {
-        return;
-      }
-      setTestConnectionPending(true);
-      vscode.postMessage({
-        type: 'testConnection',
-        payload: {
-          baseURL: el('baseURL').value,
-          model: el('model').value
-        }
-      });
+      if (testConnectionPending) return;
+      testConnectionPending = true; el('testConnection').disabled = true; el('testConnection').textContent = '调测进行中...';
+      vscode.postMessage({ type: 'testConnection', payload: { baseURL: el('baseURL').value, model: el('model').value } });
     });
     el('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
 
     vscode.postMessage({ type: 'refresh' });
   </script>
 </body>
-</html>`;
+</html>
+`;
   }
 
   private dispose(): void {

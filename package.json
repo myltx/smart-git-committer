@@ -28,10 +28,7 @@
     "ai"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:smartGitCommitter.generateCommitMessage",
-    "onCommand:smartGitCommitter.setApiKey",
-    "onCommand:smartGitCommitter.configure"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -66,31 +63,36 @@
         "smartGitCommitter.baseURL": {
           "type": "string",
           "default": "https://api.moleapi.com",
-          "description": "AI 模型 API 的 Base URL（默认 MoleAPI；支持其他 OpenAI 兼容中转站）"
+          "description": "AI 模型 API 的 Base URL（默认 MoleAPI；支持其他 OpenAI 兼容中转站）",
+          "scope": "application"
         },
         "smartGitCommitter.apiKey": {
           "type": "string",
           "default": "",
-          "description": "API 密钥（建议通过 SecretStorage 安全存储）"
+          "description": "API 密钥（建议通过 SecretStorage 安全存储）",
+          "scope": "application"
         },
         "smartGitCommitter.model": {
           "type": "string",
           "default": "gpt-4o-mini",
-          "description": "要使用的模型名称"
+          "description": "要使用的模型名称",
+          "scope": "application"
         },
         "smartGitCommitter.recentCommitCount": {
           "type": "number",
           "default": 3,
           "minimum": 1,
           "maximum": 10,
-          "description": "用于风格参考的近期提交数量"
+          "description": "用于风格参考的近期提交数量",
+          "scope": "resource"
         },
         "smartGitCommitter.maxDiffChars": {
           "type": "number",
           "default": 12000,
           "minimum": 2000,
           "maximum": 200000,
-          "description": "发送给 AI 的最大 Diff 字符数预算（超出会自动裁剪）"
+          "description": "发送给 AI 的最大 Diff 字符数预算（超出会自动裁剪）",
+          "scope": "resource"
         },
         "smartGitCommitter.includeGlobs": {
           "type": "array",
@@ -98,7 +100,8 @@
             "type": "string"
           },
           "default": [],
-          "description": "仅包含这些 glob 匹配的文件；为空表示不过滤（示例：src/**, package.json）"
+          "description": "仅包含这些 glob 匹配的文件；为空表示不过滤（示例：src/**, package.json）",
+          "scope": "resource"
         },
         "smartGitCommitter.excludeGlobs": {
           "type": "array",
@@ -112,17 +115,20 @@
             "coverage/**",
             ".vscode/settings.json"
           ],
-          "description": "排除这些 glob 匹配的文件，避免无关改动影响提交信息"
+          "description": "排除这些 glob 匹配的文件，避免无关改动影响提交信息",
+          "scope": "resource"
         },
         "smartGitCommitter.respectGitIgnore": {
           "type": "boolean",
           "default": true,
-          "description": "是否结合项目 .gitignore 规则过滤文件（推荐开启）"
+          "description": "是否结合项目 .gitignore 规则过滤文件（推荐开启）",
+          "scope": "resource"
         },
         "smartGitCommitter.autoStageUntracked": {
           "type": "boolean",
           "default": false,
-          "description": "暂存区为空时，是否把未跟踪文件也自动加入暂存区（默认关闭）"
+          "description": "暂存区为空时，是否把未跟踪文件也自动加入暂存区（默认关闭）",
+          "scope": "resource"
         },
         "smartGitCommitter.messageStyle": {
           "type": "string",
@@ -131,7 +137,8 @@
             "title+body"
           ],
           "default": "title",
-          "description": "提交信息输出风格：单行标题或标题+正文"
+          "description": "提交信息输出风格：单行标题或标题+正文",
+          "scope": "resource"
         },
         "smartGitCommitter.languageMode": {
           "type": "string",
@@ -141,12 +148,14 @@
             "en"
           ],
           "default": "auto",
-          "description": "提交信息语言策略：自动识别、强制中文或强制英文"
+          "description": "提交信息语言策略：自动识别、强制中文或强制英文",
+          "scope": "resource"
         },
         "smartGitCommitter.promptTemplate": {
           "type": "string",
           "default": "",
-          "description": "高级：自定义 Prompt 模板。支持占位符 {{DIFF}}、{{RECENT_COMMITS}}、{{MESSAGE_STYLE_RULES}}、{{LANGUAGE_INSTRUCTION}}、{{STYLE_PREFERENCE}}、{{ALLOWED_TYPES}}。留空使用内置模板。"
+          "description": "高级：自定义 Prompt 模板。支持占位符 {{DIFF}}、{{RECENT_COMMITS}}、{{MESSAGE_STYLE_RULES}}、{{LANGUAGE_INSTRUCTION}}、{{STYLE_PREFERENCE}}、{{ALLOWED_TYPES}}。留空使用内置模板。",
+          "scope": "resource"
         }
       }
     },
