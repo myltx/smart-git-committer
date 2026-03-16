@@ -10,6 +10,18 @@
 
 - 暂无
 
+## [0.3.1] - 2026-03-16
+
+### Added
+
+- feat(release): 精简配置项，优化设置保存逻辑
+- feat(release): 添加自动生成 Release 说明功能
+
+
+### Added
+
+- 暂无
+
 ## [0.3.0] - 2026-03-12
 
 ### Added
@@ -52,7 +64,8 @@
 - 提供设置面板（基础配置与高级模板分离保存、连接测试、邀请链接入口）。
 - 提供 GitHub Actions：`main` 做质量检查，`v*` tag 自动发布 Release 并上传 `.vsix`。
 
-[Unreleased]: https://github.com/myltx/smart-git-committer/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/myltx/smart-git-committer/compare/v0.3.1...HEAD
 [0.0.1]: https://github.com/myltx/smart-git-committer/releases/tag/v0.0.1
 [0.2.0]: https://github.com/myltx/smart-git-committer/compare/v0.1.0...v0.2.0
 [0.3.0]: https://github.com/myltx/smart-git-committer/compare/v0.2.0...v0.3.0
+[0.3.1]: https://github.com/myltx/smart-git-committer/compare/v0.3.0...v0.3.1
